@@ -5,12 +5,14 @@ import 'rxjs/add/operator/catch';
 
 import { ApiService } from './api.service';
 import { Profile } from '../models';
+import { UserService } from './user.service';
 
 @Injectable()
 export class ProfilesService {
-  constructor (
-    private apiService: ApiService
-  ) {}
+  constructor(
+    private apiService: ApiService,
+    private userService: UserService
+  ) { }
 
   get(username: string): Observable<Profile> {
     return this.apiService.get('/profiles/' + username)
@@ -18,11 +20,18 @@ export class ProfilesService {
   }
 
   follow(username: string): Observable<Profile> {
-    return this.apiService.post('/profiles/' + username + '/follow')
+    return this.apiService.post(
+      `insert into followers (followee, follower)
+       values(${username}, {{this.userService.currentUser | async}})`
+    );
   }
 
   unfollow(username: string): Observable<Profile> {
-    return this.apiService.delete('/profiles/' + username + '/follow')
+    return this.apiService.post(
+      `delete from followers where
+       followee = '${username}' and
+       follower = '{{this.userService.currentUser | async}}')`
+    );
   }
 
 }

@@ -1,14 +1,17 @@
 import { Injectable } from '@angular/core';
-import { Http } from '@angular/http';
+import { Http, URLSearchParams } from '@angular/http';
 import { Observable } from 'rxjs/Rx';
 import { BehaviorSubject } from 'rxjs/BehaviorSubject';
 import { ReplaySubject } from 'rxjs/ReplaySubject';
 import 'rxjs/add/operator/map';
 import 'rxjs/add/operator/catch';
-
 import { ApiService } from './api.service';
 import { JwtService } from './jwt.service';
 import { User } from '../models';
+import { AngularFireAuth } from 'angularfire2/auth';
+import * as firebase from 'firebase/app';
+import { AsyncSubject } from 'rxjs/AsyncSubject';
+import { Errors } from '../models/errors.model';
 
 
 @Injectable()
@@ -19,55 +22,75 @@ export class UserService {
   private isAuthenticatedSubject = new ReplaySubject<boolean>(1);
   public isAuthenticated = this.isAuthenticatedSubject.asObservable();
 
-  constructor (
+  constructor(
     private apiService: ApiService,
     private http: Http,
-    private jwtService: JwtService
-  ) {}
+    private jwtService: JwtService,
+    private afAuth: AngularFireAuth
+  ) { }
 
-  // Verify JWT in localstorage with server & load user's info.
-  // This runs once on application startup.
   populate() {
-    // If JWT detected, attempt to get & store user's info
+    this.afAuth.idToken.subscribe(token => {
+      console.log('token: ' + token);
+      if (token) {
+        this.jwtService.saveToken(token);
+      } else {
+        this.jwtService.destroyToken();
+      }
+    });
+
+    this.populateUser();
+  }
+
+  private populateUser() {
     if (this.jwtService.getToken()) {
-      this.apiService.get('/user')
-      .subscribe(
-        data => this.setAuth(data.user),
+      this.apiService.query({
+        type: 'single',
+        sql: `select * from users`,
+      }).subscribe(
+        data => this.setAuth(data.payload),
         err => this.purgeAuth()
-      );
+        );
     } else {
-      // Remove any potential remnants of previous auth states
       this.purgeAuth();
     }
   }
 
   setAuth(user: User) {
-    // Save JWT sent from server in localstorage
-    this.jwtService.saveToken(user.token);
-    // Set current user data into observable
     this.currentUserSubject.next(user);
-    // Set isAuthenticated to true
     this.isAuthenticatedSubject.next(true);
   }
 
   purgeAuth() {
-    // Remove JWT from localstorage
     this.jwtService.destroyToken();
-    // Set current user to an empty object
     this.currentUserSubject.next(new User());
-    // Set auth status to false
     this.isAuthenticatedSubject.next(false);
+    this.afAuth.auth.signOut();
   }
 
-  attemptAuth(type, credentials): Observable<User> {
+  attemptAuth(type, credentials): Observable<any> {
     const route = (type === 'login') ? '/login' : '';
-    return this.apiService.post('/users' + route, {user: credentials})
-    .map(
-      data => {
-        this.setAuth(data.user);
-        return data;
-      }
-    );
+    if (type === 'login') {
+      return Observable.fromPromise(this.afAuth.auth.signInWithEmailAndPassword(credentials.email, credentials.password))
+        .flatMap((fbUser) => {
+          this.populateUser();
+          return fbUser;
+        });
+    } else {
+      return Observable.fromPromise(this.afAuth.auth.createUserWithEmailAndPassword(credentials.email, credentials.password))
+        .map(fbUser => {
+          const user = new User();
+          user.id = fbUser.uid;
+          user.email = fbUser.email;
+          user.username = credentials.username;
+          this.update(user);
+          return fbUser;
+        })
+        .flatMap((fbUser) => {
+          this.populateUser();
+          return fbUser;
+        });
+    }
   }
 
   getCurrentUser(): User {
@@ -76,12 +99,17 @@ export class UserService {
 
   // Update the user on the server (email, pass, etc)
   update(user): Observable<User> {
-    return this.apiService
-    .put('/user', { user })
-    .map(data => {
-      // Update the currentUser observable
-      this.currentUserSubject.next(data.user);
-      return data.user;
+    return this.apiService.update({
+      sql: `insert into users (id, username, email, bio, image)
+            values('${user.id}', '${user.username}','${user.email}', '${user.bio}', '${user.image}')
+            on duplicate key update
+              username = '${user.username}',
+              email = '${user.email}',
+              bio = '${user.bio}',
+              image = '${user.image}'
+            `
+    }).map(data => {
+      return user;
     });
   }
 

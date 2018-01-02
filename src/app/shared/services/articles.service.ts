@@ -3,35 +3,35 @@ import { URLSearchParams } from '@angular/http';
 import { Observable } from 'rxjs/Rx';
 import 'rxjs/add/operator/map';
 import 'rxjs/add/operator/catch';
+import * as squel from 'squel';
 
 import { ApiService } from './api.service';
 import { Article, ArticleListConfig } from '../models';
 
 @Injectable()
 export class ArticlesService {
-  constructor (
+  constructor(
     private apiService: ApiService
-  ) {}
+  ) { }
 
-  query(config: ArticleListConfig): Observable<{articles: Article[], articlesCount: number}> {
+  query(config: ArticleListConfig): Observable<{ articles: Article[], articlesCount: number }> {
     // Convert any filters over to Angular's URLSearchParams
+    squel.select()
     const params: URLSearchParams = new URLSearchParams();
-
-    Object.keys(config.filters)
-    .forEach((key) => {
-      params.set(key, config.filters[key]);
-    });
+    params.set('sql',
+      ` select * from follows
+        left join articles on follows.user_id = articles.user_id
+        order by created_at
+      `
+    );
 
     return this.apiService
-    .get(
-      '/articles' + ((config.type === 'feed') ? '/feed' : ''),
-      params
-    ).map(data => data);
+      .get('', params).map(data => data);
   }
 
   get(slug): Observable<Article> {
     return this.apiService.get('/articles/' + slug)
-           .map(data => data.article);
+      .map(data => data.article);
   }
 
   destroy(slug) {
@@ -41,13 +41,13 @@ export class ArticlesService {
   save(article): Observable<Article> {
     // If we're updating an existing article
     if (article.slug) {
-      return this.apiService.put('/articles/' + article.slug, {article: article})
-             .map(data => data.article);
+      return this.apiService.put('/articles/' + article.slug, { article: article })
+        .map(data => data.article);
 
-    // Otherwise, create a new article
+      // Otherwise, create a new article
     } else {
-      return this.apiService.post('/articles/', {article: article})
-             .map(data => data.article);
+      return this.apiService.post('/articles/', { article: article })
+        .map(data => data.article);
     }
   }
 
